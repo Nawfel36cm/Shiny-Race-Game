@@ -203,7 +203,9 @@ select option{background:var(--surf)}
   padding:2px 6px;border-radius:8px;opacity:0;transition:.15s}
 .ev:hover .evx,.evx:focus-visible{opacity:1}
 .evx:hover{color:var(--rose);background:rgba(255,78,125,.12)}
-.iconbtn{font-size:17px;line-height:1;padding:7px 13px;min-width:0}
+.qb.undo{flex:none;min-width:0;padding:14px 18px;font-size:19px;line-height:1;
+  border-color:var(--line-2);color:var(--dim)}
+.qb.undo:hover:not(:disabled){background:rgba(255,78,125,.14);border-color:var(--rose);color:var(--rose)}
 
 .tag{display:inline-block;font-size:11.5px;padding:3px 11px;border-radius:99px;
   background:rgba(255,255,255,.05);border:1px solid var(--line-2);color:var(--dim)}
@@ -373,6 +375,11 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 
 <!-- ====================== DIRECT ====================== -->
 <section id="live" class="hide">
+<div class="card" id="netwarn" hidden style="border-color:var(--rose);background:rgba(255,78,125,.08)">
+  <b style="color:var(--rose)">Synchronisation interrompue.</b> Tes captures sont gardées sur cet
+  appareil mais ne partent plus vers les autres joueurs. Vérifie ta connexion — la reprise est
+  automatique.
+</div>
   <div class="card timer" id="timer">
     <div class="state" id="tstate"></div>
     <div class="clock" id="tclock">--:--</div>
@@ -407,7 +414,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
     <h2>Dernières captures</h2>
     <div class="feed" id="feed"></div>
     <div class="row" style="margin-top:12px">
-      <button class="btn ghost small iconbtn" id="undo" title="Annuler la dernière action">↶</button>
+      
     </div>
   </div>
 
@@ -494,11 +501,11 @@ async function buildIndex(onProgress){
 async function saveDex(){
   clearTimeout(saveDex.t);
   saveDex.t = setTimeout(async () => {
-    try { await window.storage.set('dex:v1', JSON.stringify({ dex, frIndex }), false); } catch {}
+    lset('dex:v1', { dex, frIndex });
   }, 1200);
 }
 async function loadDex(){
-  try { const r = await window.storage.get('dex:v1', false);
+  try { const r = (v => v ? { value: JSON.stringify(v) } : null)(lget('dex:v1'));
     if (r){ const d = JSON.parse(r.value); dex = d.dex || {}; frIndex = d.frIndex || {}; } } catch {}
 }
 function refreshDatalist(){
@@ -507,9 +514,70 @@ function refreshDatalist(){
 }
 
 const K = { cfg: c => `race:${c}:cfg`, pl: (c,p) => `race:${c}:p:${p}` };
-const sget  = async k => { try { const r = await window.storage.get(k, true); return r ? JSON.parse(r.value) : null; } catch { return null; } };
-const sset  = async (k,v) => { try { await window.storage.set(k, JSON.stringify(v), true); return true; } catch { return false; } };
-const slist = async p => { try { const r = await window.storage.list(p, true); return r ? r.keys : []; } catch { return []; } };
+/* --------------------------- stockage --------------------------- *
+ * `window.storage` n'existe que dans l'aperçu Claude. Hébergé, le site
+ * n'a rien : chaque écriture échouait en silence, d'où les captures qui
+ * disparaissaient au sondage suivant.
+ *
+ * On passe donc par un service de stockage clé-valeur public. Les
+ * données d'une course sont partagées entre tous ceux qui ont le code —
+ * n'y mets rien de personnel.
+ *
+ * Repli sur localStorage si le réseau tombe : la course continue en
+ * solo, sans synchronisation, plutôt que de tout perdre.
+ */
+const BIN = 'https://kvdb.io/8vQxJZ2hZ5wJ3nKqR7tYbM';   /* bac public, remplaçable */
+
+const lget = k => { try { const v = localStorage.getItem('sr:'+k); return v ? JSON.parse(v) : null; } catch { return null; } };
+const lset = (k,v) => { try { localStorage.setItem('sr:'+k, JSON.stringify(v)); } catch {} };
+const lkeys = p => { try { return Object.keys(localStorage).filter(k => k.startsWith('sr:'+p)).map(k => k.slice(3)); } catch { return []; } };
+
+let netOK = true;
+const flagNet = ok => {
+  if (ok === netOK) return;
+  netOK = ok;
+  const el = document.getElementById('netwarn');
+  if (el) el.hidden = ok;
+};
+
+const sget = async k => {
+  try {
+    const r = await fetch(`${BIN}/${encodeURIComponent(k)}`, { cache: 'no-store' });
+    if (r.status === 404) { flagNet(true); return null; }
+    if (!r.ok) throw new Error(r.status);
+    const t = await r.text();
+    flagNet(true);
+    const v = t ? JSON.parse(t) : null;
+    lset(k, v);
+    return v;
+  } catch { flagNet(false); return lget(k); }
+};
+
+const sset = async (k, v) => {
+  lset(k, v);                                     /* copie locale d'abord */
+  try {
+    const r = await fetch(`${BIN}/${encodeURIComponent(k)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(v)
+    });
+    if (!r.ok) throw new Error(r.status);
+    flagNet(true); return true;
+  } catch { flagNet(false); return false; }
+};
+
+const sdel = async k => {
+  try { localStorage.removeItem('sr:'+k); } catch {}
+  try { await fetch(`${BIN}/${encodeURIComponent(k)}`, { method: 'DELETE' }); } catch {}
+};
+
+/* Le service ne sait pas lister par préfixe : on tient un index des
+   joueurs dans la config de la course, qui est déjà partagée. */
+const slist = async p => {
+  const ids = (cfg && cfg.players) ? cfg.players.map(x => x.id) : [];
+  const fromCfg = ids.map(id => `race:${code}:p:${id}`);
+  const local = lkeys(p);
+  return [...new Set([...fromCfg, ...local])];
+};
 
 const uid = () => Math.random().toString(36).slice(2,8);
 const $ = id => document.getElementById(id);
@@ -623,9 +691,9 @@ function show(id){
   $('roomtag').innerHTML = code ? `<span class="roomcode">${code}</span>` : '';
 }
 
-const rememberHost = async () => { try { await window.storage.set('host:'+code, cfg.hostId, false); } catch {} };
+const rememberHost = async () => lset('host:'+code, cfg.hostId);
 const checkHost = async () => {
-  try { const r = await window.storage.get('host:'+code, false);
+  try { const r = (v => v ? { value: JSON.stringify(v) } : null)(lget('host:'+code));
         isHost = !!r && r.value === cfg.hostId; } catch { isHost = false; }
 };
 
@@ -730,8 +798,8 @@ $('addplayer').onclick = () => {
 $('pname').addEventListener('keydown', e => { if (e.key === 'Enter') $('addplayer').click(); });
 $('wipe').onclick = async () => {
   if (!confirm('Effacer définitivement cette course ?')) return;
-  try { await window.storage.delete(K.cfg(code), true); } catch {}
-  for (const p of cfg.players) { try { await window.storage.delete(K.pl(code,p.id), true); } catch {} }
+  await sdel(K.cfg(code));
+  for (const p of cfg.players) await sdel(K.pl(code, p.id));
   stopPoll(); code=''; cfg=null; catches={}; show('home');
 };
 $('tolive').onclick = () => { renderLive(); renderTimer(); show('live'); };
@@ -786,6 +854,13 @@ function renderQuick(){
     `<button class="qb ${it.rule?'rule':''}" data-q="${i}">
        <span class="lb">${it.label}</span><span class="vl">+${it.pts}</span></button>`).join('')
     || `<p class="note" style="margin:0">Aucun bouton : règle le barème dans les réglages.</p>`) + `</div>`;
+  /* La flèche vit au bout de la rangée de boutons : c'est là qu'on
+     vient de cliquer, donc là qu'on corrige. */
+  if (items.length) $('quickwrap').insertAdjacentHTML('beforeend',
+    `<button class="qb undo" id="undo" title="Annuler la dernière action">↶</button>`);
+  const ub = document.getElementById('undo');
+  if (ub) ub.onclick = undoLast;
+
   $('quickwrap').querySelectorAll('[data-q]').forEach(b =>
     b.onclick = () => { const it = items[+b.dataset.q]; b.classList.remove('flash');
       void b.offsetWidth; b.classList.add('flash'); record(it.label, it.pts, it.label, null); });
@@ -909,16 +984,17 @@ $('feed').addEventListener('click', async e => {
     `<div class="msg"><b>Retiré.</b> ${gone.name} · −${gone.pts} pts</div>`;
 });
 
-$('undo').onclick = async () => {
+async function undoLast(){
   const pid = meId || $('cwho').value;
-  const arr = catches[pid] || [];
+  const arr = [...(catches[pid] || [])];
   if (!arr.length || !raceOpen()) return;
   const last = arr.pop();
   catches[pid] = arr;
-  await sset(K.pl(code, pid), arr);
-  $('catchmsg').innerHTML = `<div class="msg"><b>Annulé.</b> ${last.name} · −${last.pts} pts</div>`;
   renderLive();
-};
+  const ok = await sset(K.pl(code, pid), arr);
+  $('catchmsg').innerHTML = `<div class="msg"><b>Annulé.</b> ${last.name} · −${last.pts} pts`
+    + (ok ? '' : ' · <b>non synchronisé</b>') + `</div>`;
+}
 
 $('detail').addEventListener('toggle', async e => {
   if (!e.target.open || Object.keys(frIndex).length > 700 || indexing) return;
