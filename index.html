@@ -429,6 +429,8 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
   <div class="row">
     <button class="btn ghost small" id="tosetup">Réglages</button>
     <button class="btn ghost small" id="leave">Quitter</button>
+    <button class="btn ghost small" id="diagnet">Tester la synchro</button>
+    <div id="diagnetout" class="note" style="margin-top:10px;width:100%"></div>
   </div>
 </section>
 
@@ -566,17 +568,42 @@ const sget = async k => {
   } catch (e) { flagNet(false, String(e.message || e)); return lget(k); }
 };
 
+/* kvdb attend un PUT avec le corps en texte brut. Un POST portant
+   Content-Type application/json declenche une pre-verification CORS que
+   le service refuse — d'ou les 403 en ecriture alors que la lecture
+   passait. On tente PUT, puis POST en secours. */
 const sset = async (k, v) => {
   lset(k, v);                                     /* copie locale d'abord */
-  try {
-    const r = await fetch(`${BIN}/${encodeURIComponent(k)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(v)
-    });
-    if (!r.ok) throw new Error('écriture ' + r.status);
-    flagNet(true); return true;
-  } catch (e) { flagNet(false, String(e.message || e)); return false; }
+  const url = `${BIN}/${encodeURIComponent(k)}`;
+  const body = JSON.stringify(v);
+  let last = '';
+  for (const method of ['PUT', 'POST']) {
+    try {
+      const r = await fetch(url, { method, body });
+      if (r.ok) { flagNet(true); return true; }
+      last = 'écriture ' + r.status;
+    } catch (e) { last = String(e.message || e); }
+  }
+  flagNet(false, last);
+  return false;
 };
+
+/* Diagnostic : ecrit puis relit une cle temoin, et rend le detail. */
+async function selfTest(){
+  const k = 'diag' + Date.now();
+  const url = `${BIN}/${encodeURIComponent(k)}`;
+  const out = [];
+  for (const method of ['PUT', 'POST']) {
+    try { const r = await fetch(url, { method, body: '{"ok":1}' });
+          out.push(`${method} → ${r.status}`); }
+    catch (e) { out.push(`${method} → bloqué (${e.message})`); }
+  }
+  try { const r = await fetch(url, { cache:'no-store' });
+        out.push(`GET → ${r.status}` + (r.ok ? ' · ' + (await r.text()).slice(0,20) : '')); }
+  catch (e) { out.push(`GET → bloqué (${e.message})`); }
+  try { await fetch(url, { method:'DELETE' }); } catch {}
+  return out.join(' | ');
+}
 
 const sdel = async k => {
   try { localStorage.removeItem('sr:'+k); } catch {}
@@ -970,6 +997,11 @@ $('cmon').addEventListener('keydown', e => { if (e.key === 'Enter') $('addcatch'
 /* Memorise le joueur des qu'il est choisi, avant meme la premiere
    capture : c'est ce qui permet de verrouiller le selecteur au depart. */
 $('undo').onclick = undoLast;
+
+$('diagnet').onclick = async () => {
+  $('diagnetout').textContent = 'test en cours…';
+  $('diagnetout').textContent = await selfTest();
+};
 
 $('cwho').addEventListener('change', () => {
   meId = $('cwho').value || null;
