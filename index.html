@@ -203,6 +203,11 @@ select option{background:var(--surf)}
   padding:2px 6px;border-radius:8px;opacity:0;transition:.15s}
 .ev:hover .evx,.evx:focus-visible{opacity:1}
 .evx:hover{color:var(--rose);background:rgba(255,78,125,.12)}
+#netwarn{position:sticky;top:0;z-index:50;padding:10px 20px;font-size:13px;
+  background:linear-gradient(90deg,rgba(255,78,125,.9),rgba(255,122,61,.85));color:#2A0410;
+  border-bottom:1px solid rgba(0,0,0,.25)}
+#netwarn[hidden]{display:none}
+#netwarn b{font-family:var(--disp)}
 .undobtn{float:right;background:rgba(255,255,255,.05);border:1px solid var(--line-2);
   color:var(--dim);width:34px;height:34px;border-radius:10px;cursor:pointer;
   font-size:17px;line-height:1;display:grid;place-items:center;transition:.15s;
@@ -267,6 +272,10 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 </style>
 </head>
 <body>
+<div id="netwarn" hidden>
+  <b>Synchronisation interrompue.</b> <span id="netdetail">Tes captures restent sur cet appareil
+  mais ne partent plus vers les autres joueurs.</span>
+</div>
 <div class="wrap">
 
 <header>
@@ -378,11 +387,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 
 <!-- ====================== DIRECT ====================== -->
 <section id="live" class="hide">
-<div class="card" id="netwarn" hidden style="border-color:var(--rose);background:rgba(255,78,125,.08)">
-  <b style="color:var(--rose)">Synchronisation interrompue.</b> Tes captures sont gardées sur cet
-  appareil mais ne partent plus vers les autres joueurs. Vérifie ta connexion — la reprise est
-  automatique.
-</div>
+
   <div class="card timer" id="timer">
     <div class="state" id="tstate"></div>
     <div class="clock" id="tclock">--:--</div>
@@ -529,17 +534,22 @@ const K = { cfg: c => `race:${c}:cfg`, pl: (c,p) => `race:${c}:p:${p}` };
  * Repli sur localStorage si le réseau tombe : la course continue en
  * solo, sans synchronisation, plutôt que de tout perdre.
  */
-const BIN = 'https://kvdb.io/8vQxJZ2hZ5wJ3nKqR7tYbM';   /* bac public, remplaçable */
+const BIN = 'https://kvdb.io/QXJUHXfyqq8q6hr9r3iSBw';   /* bac kvdb.io, remplaçable */
 
 const lget = k => { try { const v = localStorage.getItem('sr:'+k); return v ? JSON.parse(v) : null; } catch { return null; } };
 const lset = (k,v) => { try { localStorage.setItem('sr:'+k, JSON.stringify(v)); } catch {} };
 const lkeys = p => { try { return Object.keys(localStorage).filter(k => k.startsWith('sr:'+p)).map(k => k.slice(3)); } catch { return []; } };
 
 let netOK = true;
-const flagNet = ok => {
+let netMsg = '';
+const flagNet = (ok, why) => {
+  if (why) netMsg = why;
   if (ok === netOK) return;
   netOK = ok;
   const el = document.getElementById('netwarn');
+  const d  = document.getElementById('netdetail');
+  if (d && !ok && netMsg) d.textContent =
+    `Tes captures restent sur cet appareil mais ne partent plus vers les autres joueurs. (${netMsg})`;
   if (el) el.hidden = ok;
 };
 
@@ -547,13 +557,13 @@ const sget = async k => {
   try {
     const r = await fetch(`${BIN}/${encodeURIComponent(k)}`, { cache: 'no-store' });
     if (r.status === 404) { flagNet(true); return null; }
-    if (!r.ok) throw new Error(r.status);
+    if (!r.ok) throw new Error('lecture ' + r.status);
     const t = await r.text();
     flagNet(true);
     const v = t ? JSON.parse(t) : null;
     lset(k, v);
     return v;
-  } catch { flagNet(false); return lget(k); }
+  } catch (e) { flagNet(false, String(e.message || e)); return lget(k); }
 };
 
 const sset = async (k, v) => {
@@ -563,9 +573,9 @@ const sset = async (k, v) => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(v)
     });
-    if (!r.ok) throw new Error(r.status);
+    if (!r.ok) throw new Error('écriture ' + r.status);
     flagNet(true); return true;
-  } catch { flagNet(false); return false; }
+  } catch (e) { flagNet(false, String(e.message || e)); return false; }
 };
 
 const sdel = async k => {
