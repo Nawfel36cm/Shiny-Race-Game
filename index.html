@@ -188,7 +188,7 @@ select option{background:var(--surf)}
 .feed{display:grid;gap:6px;max-height:320px;overflow:auto;margin:-4px}
 .feed::-webkit-scrollbar{width:6px}
 .feed::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:99px}
-.ev{display:grid;grid-template-columns:44px 1fr auto;gap:11px;align-items:center;margin:4px;
+.ev{display:grid;grid-template-columns:44px 1fr auto auto;gap:11px;align-items:center;margin:4px;
   background:rgba(255,255,255,.028);border:1px solid var(--line);border-radius:var(--r-s);padding:8px 13px}
 .ev.void{opacity:.45}
 .ev.void .p{color:var(--rose);text-decoration:line-through}
@@ -199,6 +199,11 @@ select option{background:var(--surf)}
 .ev .nm{font-family:var(--disp);font-weight:600;font-size:15px}
 .ev .why{font-size:11.5px;color:var(--dim-2)}
 .ev .p{font-family:var(--disp);font-weight:700;font-size:18px;color:var(--mint)}
+.evx{background:none;border:none;color:var(--dim-2);font-size:19px;line-height:1;cursor:pointer;
+  padding:2px 6px;border-radius:8px;opacity:0;transition:.15s}
+.ev:hover .evx,.evx:focus-visible{opacity:1}
+.evx:hover{color:var(--rose);background:rgba(255,78,125,.12)}
+.iconbtn{font-size:17px;line-height:1;padding:7px 13px;min-width:0}
 
 .tag{display:inline-block;font-size:11.5px;padding:3px 11px;border-radius:99px;
   background:rgba(255,255,255,.05);border:1px solid var(--line-2);color:var(--dim)}
@@ -377,7 +382,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 
   <div class="card">
     <h2>Nouvelle capture</h2>
-    <div class="field"><label for="cwho">Joueur</label><select id="cwho"></select></div>
+    <div class="field"><label for="cwho">Joueur</label><select id="cwho"></select><p class="note" id="cwholock" hidden style="margin-top:6px">Choix figé pour la durée de la course.</p></div>
     <div id="quickwrap"></div>
     <div id="catchmsg" style="margin-top:13px"></div>
 
@@ -402,7 +407,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
     <h2>Dernières captures</h2>
     <div class="feed" id="feed"></div>
     <div class="row" style="margin-top:12px">
-      <button class="btn ghost small" id="undo">Annuler la dernière du joueur</button>
+      <button class="btn ghost small iconbtn" id="undo" title="Annuler la dernière action">↶</button>
     </div>
   </div>
 
@@ -746,7 +751,16 @@ async function pull(){
   if (c && (!cfg || (c.updated || 0) > (cfg.updated || 0))) { cfg = c; if (!cfg.timer) cfg.timer = DEFAULT_CFG().timer; }
   const keys = await slist(`race:${code}:p:`);
   const next = {};
-  for (const k of keys){ const v = await sget(k); if (v) next[k.split(':').pop()] = v; }
+  for (const k of keys){
+    const v = await sget(k);
+    /* `if (v)` rejetait le tableau vide : annuler sa derniere capture
+       faisait disparaitre la cle, et le sondage suivant restaurait
+       l'ancienne liste depuis la copie locale — d'ou l'impression que
+       tout se remettait a zero. On accepte donc tout tableau. */
+    if (Array.isArray(v)) next[k.split(':').pop()] = v;
+  }
+  /* Une cle absente ne doit pas ressusciter les captures locales. */
+  for (const pid of Object.keys(catches)) if (!(pid in next)) next[pid] = [];
   catches = next;
 }
 const allCatches = () => Object.entries(catches).flatMap(([pid,arr]) => (arr||[]).map(c => ({ ...c, pid })));
@@ -779,9 +793,16 @@ function renderQuick(){
 
 function renderLive(){
   if (!cfg) return;
+  /* Le joueur se choisit une fois, avant le depart. Une fois la course
+     lancee on fige le choix : changer de pseudo en pleine partie
+     permettrait d'attribuer ses captures a quelqu'un d'autre. */
+  const locked = raceOpen() && !!meId;
   $('cwho').innerHTML = cfg.players.length
     ? cfg.players.map(p => `<option value="${p.id}"${p.id===meId?' selected':''}>${p.name}</option>`).join('')
     : `<option value="">aucun joueur — voir les réglages</option>`;
+  $('cwho').disabled = locked;
+  const hint = $('cwholock');
+  if (hint) hint.hidden = !locked;
   renderQuick();
   $('detail').open = $('detail').open && raceOpen();
   $('cmon').disabled = $('addcatch').disabled = !raceOpen();
@@ -817,10 +838,13 @@ function renderLive(){
     const ok = inTime(c);
     const vis = c.dexid ? `<img src="${SPRITE(c.dexid)}" alt="" onerror="this.style.visibility='hidden'">`
                         : `<span class="ph"><i></i></span>`;
+    const mine = raceOpen() && c.pid === meId;
     return `<div class="ev${ok?'':' void'}">${vis}
       <div><div class="nm">${c.name}</div>
         <div class="why">${p?p.name:'?'} · ${new Date(c.at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}${ok?'':' · hors délai'}</div></div>
-      <div class="p">+${c.pts}</div></div>`; }).join('')
+      <div class="p">+${c.pts}</div>
+      ${mine ? `<button class="evx" data-del-catch="${c.id}" title="Retirer cette capture">&times;</button>` : '<span></span>'}
+      </div>`; }).join('')
     || `<p class="note" style="margin:0">Aucune capture pour l'instant.</p>`;
 }
 
@@ -862,8 +886,31 @@ $('addcatch').onclick = async () => {
 };
 $('cmon').addEventListener('keydown', e => { if (e.key === 'Enter') $('addcatch').click(); });
 
+/* Memorise le joueur des qu'il est choisi, avant meme la premiere
+   capture : c'est ce qui permet de verrouiller le selecteur au depart. */
+$('cwho').addEventListener('change', () => {
+  meId = $('cwho').value || null;
+  try { localStorage.setItem('sr:me:' + code, meId || ''); } catch {}
+  renderLive();
+});
+
+/* Suppression ciblee : on ne peut retirer que ses propres captures,
+   et seulement tant que la course est ouverte. */
+$('feed').addEventListener('click', async e => {
+  const b = e.target.closest('[data-del-catch]');
+  if (!b || !raceOpen() || !meId) return;
+  const id = b.dataset.delCatch;
+  const arr = (catches[meId] || []).filter(x => x.id !== id);
+  const gone = (catches[meId] || []).find(x => x.id === id);
+  catches[meId] = arr;
+  renderLive();
+  await sset(K.pl(code, meId), arr);
+  if (gone) $('catchmsg').innerHTML =
+    `<div class="msg"><b>Retiré.</b> ${gone.name} · −${gone.pts} pts</div>`;
+});
+
 $('undo').onclick = async () => {
-  const pid = $('cwho').value;
+  const pid = meId || $('cwho').value;
   const arr = catches[pid] || [];
   if (!arr.length || !raceOpen()) return;
   const last = arr.pop();
