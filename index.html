@@ -699,8 +699,8 @@ async function saveDex(){
   }, 1200);
 }
 async function loadDex(){
-  try { const r = (v => v ? { value: JSON.stringify(v) } : null)(lget('dex:v1'));
-    if (r){ const d = JSON.parse(r.value); dex = d.dex || {}; frIndex = d.frIndex || {}; } } catch {}
+  try { const d = lget('dex:v1');
+    if (d){ dex = d.dex || {}; frIndex = d.frIndex || {}; } } catch {}
 }
 /* La liste de suggestions est construite a la demande dans `suggCmon`,
    plus besoin d'un datalist de 1200 entrees. */
@@ -820,10 +820,15 @@ function show(id){
   $('roomtag').innerHTML = code ? `<span class="roomcode">${code}</span>` : '';
 }
 
-const rememberHost = async () => lset('host:'+code, cfg.hostId);
+/* Le statut d'organisateur tient a une valeur gardee sur l'appareil :
+   si elle correspond au `hostId` de la course, c'est bien lui.
+   L'ancienne version comparait une chaine JSON (`"abc"`, guillemets
+   compris) a l'identifiant brut — la comparaison echouait toujours et
+   le controle du minuteur etait perdu des qu'on quittait la page. */
+const rememberHost = async () => lset('host:' + code, cfg.hostId);
 const checkHost = async () => {
-  try { const r = (v => v ? { value: JSON.stringify(v) } : null)(lget('host:'+code));
-        isHost = !!r && r.value === cfg.hostId; } catch { isHost = false; }
+  try { isHost = lget('host:' + code) === cfg.hostId; }
+  catch { isHost = false; }
 };
 
 $('create').onclick = async () => {
@@ -1009,7 +1014,8 @@ async function reprendre(c){
   const garde = histLire().find(x => x.code === c);
   const moi = garde && cfg.players.find(p => p.name === garde.pseudo);
   meId = moi ? moi.id : (lget('me:' + c) || null);
-  await checkHost(); await pull(); renderLive(); show('live'); startPoll();
+  await checkHost();          /* rend le contrôle du minuteur a l'organisateur */
+  await pull(); histNoter(); renderLive(); show('live'); startPoll();
 }
 
 function renderHist(){
