@@ -1164,7 +1164,19 @@ li.p1 .rk{color:#FFCE3A}
 .qb.flash{animation:fl .4s}
 @keyframes fl{0%{background:rgba(46,230,168,.4)}100%{background:rgba(255,255,255,.05)}}
 .sp{display:flex;gap:6px;margin-top:8px}
-.sp input{flex:1;min-width:0;font-family:"Nunito Sans",system-ui,sans-serif;font-size:13px;
+.spbox{position:relative;flex:1;min-width:0}
+.sugg{position:absolute;left:0;right:0;bottom:calc(100% + 5px);z-index:20;
+  background:#2B1836;border:1px solid #633D6E;border-radius:11px;overflow:hidden;
+  box-shadow:0 -10px 30px -12px rgba(0,0,0,.85);max-height:186px;overflow-y:auto}
+.sugg[hidden]{display:none}
+.sugg button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  background:none;border:none;color:#FFF3E8;font-family:"Nunito Sans",system-ui,sans-serif;
+  font-size:13px;padding:7px 11px;cursor:pointer}
+.sugg button:hover,.sugg button.on{background:rgba(255,154,46,.18)}
+.sugg img{width:26px;height:26px;object-fit:contain;object-position:center bottom;
+  image-rendering:pixelated;flex:none}
+.sugg .g{color:#9A7C9C;font-size:11px;margin-left:auto}
+.sp input{width:100%;min-width:0;font-family:"Nunito Sans",system-ui,sans-serif;font-size:13px;
   background:rgba(0,0,0,.3);color:#FFF3E8;border:1px solid #633D6E;border-radius:10px;padding:9px 12px}
 .sp input:focus{outline:none;border-color:#FF7A3D;box-shadow:0 0 0 3px rgba(255,122,61,.18)}
 .sp input::placeholder{color:#9A7C9C}
@@ -1227,7 +1239,10 @@ function overlayHTML(){
            <span>${esc(it.label)}</span><span class="vl">+${it.pts}</span></button>`).join('')
         || `<div class="shut">Aucun bouton : règle le barème dans les réglages.</div>`) + `</div>
       <div class="sp">
-        <input id="spmon" placeholder="Préciser l'espèce (facultatif)" autocomplete="off">
+        <div class="spbox">
+          <input id="spmon" placeholder="Préciser l'espèce (facultatif)" autocomplete="off">
+          <div class="sugg" id="spsugg" hidden></div>
+        </div>
         <button class="qb sp-go" data-add="1">Ajouter</button>
       </div>
       <div class="spmsg" id="spmsg"></div>
@@ -1277,15 +1292,67 @@ function refreshOverlay(){
   const inp = el.querySelector('#spmon');
   const go  = el.querySelector('[data-add]');
   const msg = el.querySelector('#spmsg');
+  const box = el.querySelector('#spsugg');
+
+  /* Suggestions maison : un `datalist` ne traverse pas vers une autre
+     fenetre, on construit donc la liste a la main. Elle s'ouvre vers le
+     haut, la fenetre etant courte. */
+  let choix = [], curseur = -1;
+
+  const fermer = () => { if (box) { box.hidden = true; box.innerHTML = ''; } choix = []; curseur = -1; };
+
+  function suggerer(){
+    if (!box || !inp) return;
+    const q = norm(inp.value.trim());
+    if (q.length < 1) return fermer();
+    const tous = Object.values(dex);
+    /* Ceux qui commencent par la saisie d'abord, puis ceux qui la
+       contiennent : taper « pika » doit remonter Pikachu avant Raichu. */
+    const debut = tous.filter(d => norm(d.fr).startsWith(q));
+    const dedans = tous.filter(d => !norm(d.fr).startsWith(q) && norm(d.fr).includes(q));
+    choix = [...debut, ...dedans].slice(0, 8);
+    if (!choix.length) return fermer();
+    curseur = -1;
+    box.innerHTML = choix.map((d,i) =>
+      `<button data-s="${i}"><img src="${spriteFor(d.id)}" alt=""
+         onerror="this.style.visibility='hidden'"><span>${d.fr}</span>
+         <span class="g">n°${d.id}</span></button>`).join('');
+    box.hidden = false;
+    box.querySelectorAll('[data-s]').forEach(b =>
+      b.onmousedown = e => { e.preventDefault(); prendre(choix[+b.dataset.s]); });
+  }
+
+  function surligner(){
+    if (!box) return;
+    box.querySelectorAll('[data-s]').forEach((b,i) => b.classList.toggle('on', i === curseur));
+    const actif = box.querySelector('.on');
+    if (actif) actif.scrollIntoView({ block: 'nearest' });
+  }
+
+  function prendre(rec){
+    if (!rec) return;
+    inp.value = rec.fr; overlayDraft = rec.fr;
+    fermer();
+    valider();
+  }
+
   if (inp) {
     inp.value = overlayDraft;
-    inp.oninput = () => { overlayDraft = inp.value; };
-    inp.onkeydown = e => { if (e.key === 'Enter') valider(); };
+    inp.oninput = () => { overlayDraft = inp.value; suggerer(); };
+    inp.onkeydown = e => {
+      if (box && !box.hidden && choix.length) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); curseur = (curseur + 1) % choix.length; return surligner(); }
+        if (e.key === 'ArrowUp')   { e.preventDefault(); curseur = (curseur - 1 + choix.length) % choix.length; return surligner(); }
+        if (e.key === 'Escape')    { return fermer(); }
+        if (e.key === 'Enter' && curseur >= 0) { e.preventDefault(); return prendre(choix[curseur]); }
+      }
+      if (e.key === 'Enter') valider();
+    };
     if (overlayFocus) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     inp.onfocus = () => { overlayFocus = true; };
-    inp.onblur  = () => { overlayFocus = false; };
+    inp.onblur  = () => { overlayFocus = false; setTimeout(fermer, 120); };
   }
-  if (go) go.onclick = valider;
+  if (go) go.onclick = () => { fermer(); valider(); };
 
   async function valider(){
     const raw = (inp && inp.value.trim()) || '';
