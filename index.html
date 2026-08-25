@@ -837,14 +837,13 @@ function show(id){
   majPopout(id);
 }
 
-/* La vue compacte n'apparait qu'une fois le depart donne : avant, il n'y
-   a ni chronometre qui defile ni points a suivre, elle n'aurait rien a
-   montrer. On ferme aussi la fenetre si la course revient a l'arret. */
+/* La vue compacte est disponible des l'entree dans un salon : on peut
+   vouloir la poser sur un second ecran avant meme le depart. Elle est
+   masquee ailleurs, ou elle n'aurait aucune course a afficher. */
 function majPopout(vue){
   const b = $('popout');
   if (!b) return;
-  const lancee = !!(cfg && cfg.timer && cfg.timer.started);
-  const montrer = (vue === 'live' || (!vue && code)) && lancee;
+  const montrer = (vue === 'live' || (!vue && code)) && !!cfg;
   b.hidden = !montrer;
   if (!montrer && popWin && !popWin.closed) popWin.close();
 }
