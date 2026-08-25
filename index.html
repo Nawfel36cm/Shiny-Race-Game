@@ -452,6 +452,100 @@ const RELEASES = {
   'Linux':   ''    // ...releases/download/v1.0.0/Shiny.Race.Studio-1.0.0.AppImage
 };
 
+/* --------------------------- stockage --------------------------- *
+ * Supabase : table `store` a deux colonnes, `key` et `value`.
+ * Les regles ouvrent la table en lecture et en ecriture — les donnees
+ * d'une course sont partagees entre tous ceux qui ont le code, il ne
+ * faut donc rien y mettre de personnel.
+ *
+ * Repli sur localStorage si le reseau tombe : la course continue en
+ * solo, sans synchronisation, plutot que de tout perdre.
+ */
+const SB_URL = 'https://cfuathodraqyvencrbfl.supabase.co';
+const SB_KEY = 'sb_publishable_XnnpnppoVIjA6FGX7UimSQ_LU5ChMem';
+const SB = `${SB_URL}/rest/v1/store`;
+const SB_H = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`,
+               'Content-Type': 'application/json' };
+
+const lget = k => { try { const v = localStorage.getItem('sr:'+k); return v ? JSON.parse(v) : null; } catch { return null; } };
+const lset = (k,v) => { try { localStorage.setItem('sr:'+k, JSON.stringify(v)); } catch {} };
+const lkeys = p => { try { return Object.keys(localStorage).filter(k => k.startsWith('sr:'+p)).map(k => k.slice(3)); } catch { return []; } };
+
+let netOK = true, netMsg = '';
+const flagNet = (ok, why) => {
+  if (why) netMsg = why;
+  if (ok === netOK) return;
+  netOK = ok;
+  const el = document.getElementById('netwarn');
+  const d  = document.getElementById('netdetail');
+  if (d && !ok && netMsg) d.textContent =
+    `Tes captures restent sur cet appareil mais ne partent plus vers les autres joueurs. (${netMsg})`;
+  if (el) el.hidden = ok;
+};
+
+const sget = async k => {
+  try {
+    const r = await fetch(`${SB}?key=eq.${encodeURIComponent(k)}&select=value`,
+                          { headers: SB_H, cache: 'no-store' });
+    if (!r.ok) throw new Error('lecture ' + r.status);
+    const rows = await r.json();
+    flagNet(true);
+    const v = rows.length ? rows[0].value : null;
+    if (v !== null) lset(k, v);
+    return v;
+  } catch (e) { flagNet(false, String(e.message || e)); return lget(k); }
+};
+
+/* `Prefer: resolution=merge-duplicates` fait de l'insertion un upsert :
+   une meme cle est mise a jour au lieu de lever un conflit. */
+const sset = async (k, v) => {
+  lset(k, v);
+  try {
+    const r = await fetch(SB, {
+      method: 'POST',
+      headers: { ...SB_H, Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ key: k, value: v, updated_at: new Date().toISOString() })
+    });
+    if (!r.ok) throw new Error('écriture ' + r.status + ' ' + (await r.text()).slice(0, 80));
+    flagNet(true); return true;
+  } catch (e) { flagNet(false, String(e.message || e)); return false; }
+};
+
+const sdel = async k => {
+  try { localStorage.removeItem('sr:'+k); } catch {}
+  try { await fetch(`${SB}?key=eq.${encodeURIComponent(k)}`, { method: 'DELETE', headers: SB_H }); } catch {}
+};
+
+/* Une vraie requete par prefixe, cette fois : plus besoin de deviner
+   la liste des joueurs a partir de la config. */
+const slist = async p => {
+  try {
+    const r = await fetch(`${SB}?key=like.${encodeURIComponent(p + '*')}&select=key`,
+                          { headers: SB_H, cache: 'no-store' });
+    if (!r.ok) throw new Error('liste ' + r.status);
+    flagNet(true);
+    return (await r.json()).map(x => x.key);
+  } catch (e) { flagNet(false, String(e.message || e)); return lkeys(p); }
+};
+
+/* Diagnostic : ecrit, relit, supprime une cle temoin. */
+async function selfTest(){
+  const k = 'diag' + Date.now();
+  const out = [];
+  try {
+    const r = await fetch(SB, { method:'POST',
+      headers: { ...SB_H, Prefer:'resolution=merge-duplicates' },
+      body: JSON.stringify({ key:k, value:{ok:1} }) });
+    out.push(`écriture → ${r.status}` + (r.ok ? '' : ' · ' + (await r.text()).slice(0,90)));
+  } catch (e) { out.push(`écriture → bloquée (${e.message})`); }
+  try {
+    const r = await fetch(`${SB}?key=eq.${k}&select=value`, { headers: SB_H, cache:'no-store' });
+    out.push(`lecture → ${r.status}` + (r.ok ? ' · ' + JSON.stringify(await r.json()).slice(0,40) : ''));
+  } catch (e) { out.push(`lecture → bloquée (${e.message})`); }
+  try { await fetch(`${SB}?key=eq.${k}`, { method:'DELETE', headers: SB_H }); } catch {}
+  return out.join(' | ');
+}
+
 const API = 'https://pokeapi.co/api/v2/';
 const SPRITE = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${id}.png`;
 const MAXID = 809;
@@ -524,101 +618,6 @@ function refreshDatalist(){
 }
 
 const K = { cfg: c => `race:${c}:cfg`, pl: (c,p) => `race:${c}:p:${p}` };
-/* --------------------------- stockage --------------------------- *
- * `window.storage` n'existe que dans l'aperçu Claude. Hébergé, le site
- * n'a rien : chaque écriture échouait en silence, d'où les captures qui
- * disparaissaient au sondage suivant.
- *
- * On passe donc par un service de stockage clé-valeur public. Les
- * données d'une course sont partagées entre tous ceux qui ont le code —
- * n'y mets rien de personnel.
- *
- * Repli sur localStorage si le réseau tombe : la course continue en
- * solo, sans synchronisation, plutôt que de tout perdre.
- */
-const BIN = 'https://kvdb.io/DkK3fgZyezD3LvBeM6tn5N';   /* bac kvdb.io, public read+write */
-
-const lget = k => { try { const v = localStorage.getItem('sr:'+k); return v ? JSON.parse(v) : null; } catch { return null; } };
-const lset = (k,v) => { try { localStorage.setItem('sr:'+k, JSON.stringify(v)); } catch {} };
-const lkeys = p => { try { return Object.keys(localStorage).filter(k => k.startsWith('sr:'+p)).map(k => k.slice(3)); } catch { return []; } };
-
-let netOK = true;
-let netMsg = '';
-const flagNet = (ok, why) => {
-  if (why) netMsg = why;
-  if (ok === netOK) return;
-  netOK = ok;
-  const el = document.getElementById('netwarn');
-  const d  = document.getElementById('netdetail');
-  if (d && !ok && netMsg) d.textContent =
-    `Tes captures restent sur cet appareil mais ne partent plus vers les autres joueurs. (${netMsg})`;
-  if (el) el.hidden = ok;
-};
-
-const sget = async k => {
-  try {
-    const r = await fetch(`${BIN}/${encodeURIComponent(k)}`, { cache: 'no-store' });
-    if (r.status === 404) { flagNet(true); return null; }
-    if (!r.ok) throw new Error('lecture ' + r.status);
-    const t = await r.text();
-    flagNet(true);
-    const v = t ? JSON.parse(t) : null;
-    lset(k, v);
-    return v;
-  } catch (e) { flagNet(false, String(e.message || e)); return lget(k); }
-};
-
-/* kvdb attend un PUT avec le corps en texte brut. Un POST portant
-   Content-Type application/json declenche une pre-verification CORS que
-   le service refuse — d'ou les 403 en ecriture alors que la lecture
-   passait. On tente PUT, puis POST en secours. */
-const sset = async (k, v) => {
-  lset(k, v);                                     /* copie locale d'abord */
-  const url = `${BIN}/${encodeURIComponent(k)}`;
-  const body = JSON.stringify(v);
-  let last = '';
-  for (const method of ['PUT', 'POST']) {
-    try {
-      const r = await fetch(url, { method, body });
-      if (r.ok) { flagNet(true); return true; }
-      last = 'écriture ' + r.status;
-    } catch (e) { last = String(e.message || e); }
-  }
-  flagNet(false, last);
-  return false;
-};
-
-/* Diagnostic : ecrit puis relit une cle temoin, et rend le detail. */
-async function selfTest(){
-  const k = 'diag' + Date.now();
-  const url = `${BIN}/${encodeURIComponent(k)}`;
-  const out = [];
-  for (const method of ['PUT', 'POST']) {
-    try { const r = await fetch(url, { method, body: '{"ok":1}' });
-          out.push(`${method} → ${r.status}`); }
-    catch (e) { out.push(`${method} → bloqué (${e.message})`); }
-  }
-  try { const r = await fetch(url, { cache:'no-store' });
-        out.push(`GET → ${r.status}` + (r.ok ? ' · ' + (await r.text()).slice(0,20) : '')); }
-  catch (e) { out.push(`GET → bloqué (${e.message})`); }
-  try { await fetch(url, { method:'DELETE' }); } catch {}
-  return out.join(' | ');
-}
-
-const sdel = async k => {
-  try { localStorage.removeItem('sr:'+k); } catch {}
-  try { await fetch(`${BIN}/${encodeURIComponent(k)}`, { method: 'DELETE' }); } catch {}
-};
-
-/* Le service ne sait pas lister par préfixe : on tient un index des
-   joueurs dans la config de la course, qui est déjà partagée. */
-const slist = async p => {
-  const ids = (cfg && cfg.players) ? cfg.players.map(x => x.id) : [];
-  const fromCfg = ids.map(id => `race:${code}:p:${id}`);
-  const local = lkeys(p);
-  return [...new Set([...fromCfg, ...local])];
-};
-
 const uid = () => Math.random().toString(36).slice(2,8);
 const $ = id => document.getElementById(id);
 let code = '', cfg = null, catches = {}, meId = null, poll = null, tick = null, isHost = false;
