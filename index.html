@@ -534,7 +534,7 @@ const K = { cfg: c => `race:${c}:cfg`, pl: (c,p) => `race:${c}:p:${p}` };
  * Repli sur localStorage si le réseau tombe : la course continue en
  * solo, sans synchronisation, plutôt que de tout perdre.
  */
-const BIN = 'https://kvdb.io/QXJUHXfyqq8q6hr9r3iSBw';   /* bac kvdb.io, remplaçable */
+const BIN = 'https://kvdb.io/DkK3fgZyezD3LvBeM6tn5N';   /* bac kvdb.io, public read+write */
 
 const lget = k => { try { const v = localStorage.getItem('sr:'+k); return v ? JSON.parse(v) : null; } catch { return null; } };
 const lset = (k,v) => { try { localStorage.setItem('sr:'+k, JSON.stringify(v)); } catch {} };
