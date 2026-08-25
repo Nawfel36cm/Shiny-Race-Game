@@ -56,6 +56,17 @@ header{display:flex;align-items:center;justify-content:space-between;gap:16px;pa
 .hx{background:none;border:none;color:var(--dim-2);font-size:17px;line-height:1;cursor:pointer;
   padding:2px 6px;border-radius:8px}
 .hx:hover{color:var(--rose);background:rgba(255,78,125,.12)}
+.popbtn[hidden]{display:none}
+.popbtn{display:inline-flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;
+  font-family:var(--disp);font-weight:600;font-size:13.5px;color:#3A1400;
+  background:var(--hot);border:none;border-radius:99px;padding:9px 16px 9px 13px;
+  box-shadow:0 6px 18px -8px rgba(255,122,61,.9);transition:.16s}
+.popbtn:hover{filter:brightness(1.07);transform:translateY(-1px)}
+.popbtn:focus-visible{outline:2px solid var(--flame);outline-offset:3px}
+.popbtn svg{width:19px;height:19px;flex:none}
+.popbtn rect{fill:none;stroke:#3A1400;stroke-width:1.9}
+.popbtn rect.f{fill:rgba(58,20,0,.22)}
+@media(max-width:640px){.popbtn span{display:none}.popbtn{padding:9px 12px}}
 button.mark{background:none;border:none;padding:0;cursor:pointer;font:inherit;color:inherit;text-align:left}
 .mark{display:flex;align-items:center;gap:11px}
 .ball{width:38px;height:38px;flex:none;display:block;
@@ -361,7 +372,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 
   <div class="promo">
     <h3>Shiny Race Studio</h3>
-    <p>Prépare tes ROMs avant la course : taux de shiny réglable, rencontres sauvages aléatoires à graine reproductible, et le randomizer complet — capacités, statistiques, objets, starters.</p>
+    <p>Prépare tes ROMs avant la course : taux de shiny réglable, rencontres sauvages aléatoires à graine reproductible, et le randomizer complet — dresseurs, capacités, statistiques, objets, starters.</p>
     <div class="dl">
       <a href="https://github.com/Nawfel36cm/Shiny-Race/releases" target="_blank" rel="noopener">
         Télécharger sur GitHub</a>
@@ -445,6 +456,11 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
     <div class="clock" id="tclock">--:--</div>
     <div class="track"><i id="ttrack" style="width:0%"></i></div>
     <div class="tctl" id="tctl"></div>
+    <button class="popbtn" id="popout" title="Ouvrir la vue compacte dans une fenêtre">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.5" y="4.5" width="12" height="10" rx="2"/>
+        <rect x="9.5" y="9.5" width="12" height="10" rx="2" class="f"/>
+      </svg><span>Vue compacte</span></button>
   </div>
 
   <div class="card">
@@ -483,7 +499,6 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
   <div class="row">
     <button class="btn ghost small" id="tosetup">Réglages</button>
     <button class="btn ghost small" id="leave">Quitter</button>
-    <button class="btn ghost small" id="popout">Vue compacte</button>
 
   </div>
 </section>
@@ -764,6 +779,7 @@ function renderTimer(){
   :                        `<button class="btn ghost small" data-t="add">+5 min</button>
                             <button class="btn danger" data-t="reset">Réinitialiser</button>`;
   $('tctl').querySelectorAll('[data-t]').forEach(b => b.onclick = () => timerAction(b.dataset.t));
+  majPopout();
   refreshOverlay();
 }
 function timerAction(a){
@@ -818,6 +834,19 @@ function score(rec){
 function show(id){
   ['home','setup','live'].forEach(s => $(s).classList.toggle('hide', s !== id));
   $('roomtag').innerHTML = code ? `<span class="roomcode">${code}</span>` : '';
+  majPopout(id);
+}
+
+/* La vue compacte n'apparait qu'une fois le depart donne : avant, il n'y
+   a ni chronometre qui defile ni points a suivre, elle n'aurait rien a
+   montrer. On ferme aussi la fenetre si la course revient a l'arret. */
+function majPopout(vue){
+  const b = $('popout');
+  if (!b) return;
+  const lancee = !!(cfg && cfg.timer && cfg.timer.started);
+  const montrer = (vue === 'live' || (!vue && code)) && lancee;
+  b.hidden = !montrer;
+  if (!montrer && popWin && !popWin.closed) popWin.close();
 }
 
 /* Le statut d'organisateur tient a une valeur gardee sur l'appareil :
