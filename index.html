@@ -208,6 +208,10 @@ select option{background:var(--surf)}
   border-bottom:1px solid rgba(0,0,0,.25)}
 #netwarn[hidden]{display:none}
 #netwarn b{font-family:var(--disp)}
+.whoami{display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.05);
+  border:1px solid var(--line-2);border-radius:var(--r-s);padding:11px 14px}
+.whoami b{font-family:var(--disp);font-size:16px}
+.whoami span{font-size:12px;color:var(--dim-2)}
 .undobtn{float:right;background:rgba(255,255,255,.05);border:1px solid var(--line-2);
   color:var(--dim);width:34px;height:34px;border-radius:10px;cursor:pointer;
   font-size:17px;line-height:1;display:grid;place-items:center;transition:.15s;
@@ -294,17 +298,23 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
       <h2>Créer une course</h2>
       <div class="field"><label for="rname">Nom de la course</label>
         <input id="rname" placeholder="Race du samedi" maxlength="40"></div>
+      <div class="field"><label for="cname">Ton pseudo</label>
+        <input id="cname" placeholder="Ton nom dans la course" maxlength="20"></div>
+      <div id="createmsg" style="margin-bottom:12px"></div>
       <button class="btn primary" id="create">Créer la course</button>
       <p class="note">Un code à quatre lettres à partager aux participants.</p>
     </div>
     <div class="card">
       <h2>Rejoindre</h2>
+      <div class="field"><label for="jname">Ton pseudo</label>
+        <input id="jname" placeholder="Ton nom dans la course" maxlength="20"></div>
       <div class="row" style="flex-wrap:nowrap">
         <input id="jcode" placeholder="CODE" maxlength="4"
                style="text-transform:uppercase;letter-spacing:.28em;font-family:var(--disp);font-weight:700;text-align:center;font-size:19px">
         <button class="btn ghost" id="join">Entrer</button>
       </div>
       <div id="joinmsg" style="margin-top:12px"></div>
+      <p class="note">Choisis-le maintenant : il est figé une fois la course rejointe.</p>
     </div>
   </div>
 
@@ -397,7 +407,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 
   <div class="card">
     <h2>Nouvelle capture<button class="undobtn" id="undo" title="Annuler la dernière action">↶</button></h2>
-    <div class="field"><label for="cwho">Joueur</label><select id="cwho"></select><p class="note" id="cwholock" hidden style="margin-top:6px">Choix figé pour la durée de la course.</p></div>
+    <div class="field"><label>Joueur</label><div class="whoami" id="cwho"></div></div>
     <div id="quickwrap"></div>
     <div id="catchmsg" style="margin-top:13px"></div>
 
@@ -429,8 +439,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
   <div class="row">
     <button class="btn ghost small" id="tosetup">Réglages</button>
     <button class="btn ghost small" id="leave">Quitter</button>
-    <button class="btn ghost small" id="diagnet">Tester la synchro</button>
-    <div id="diagnetout" class="note" style="margin-top:10px;width:100%"></div>
+
   </div>
 </section>
 
@@ -527,24 +536,6 @@ const slist = async p => {
     return (await r.json()).map(x => x.key);
   } catch (e) { flagNet(false, String(e.message || e)); return lkeys(p); }
 };
-
-/* Diagnostic : ecrit, relit, supprime une cle temoin. */
-async function selfTest(){
-  const k = 'diag' + Date.now();
-  const out = [];
-  try {
-    const r = await fetch(SB, { method:'POST',
-      headers: { ...SB_H, Prefer:'resolution=merge-duplicates' },
-      body: JSON.stringify({ key:k, value:{ok:1} }) });
-    out.push(`écriture → ${r.status}` + (r.ok ? '' : ' · ' + (await r.text()).slice(0,90)));
-  } catch (e) { out.push(`écriture → bloquée (${e.message})`); }
-  try {
-    const r = await fetch(`${SB}?key=eq.${k}&select=value`, { headers: SB_H, cache:'no-store' });
-    out.push(`lecture → ${r.status}` + (r.ok ? ' · ' + JSON.stringify(await r.json()).slice(0,40) : ''));
-  } catch (e) { out.push(`lecture → bloquée (${e.message})`); }
-  try { await fetch(`${SB}?key=eq.${k}`, { method:'DELETE', headers: SB_H }); } catch {}
-  return out.join(' | ');
-}
 
 const API = 'https://pokeapi.co/api/v2/';
 const SPRITE = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${id}.png`;
@@ -737,19 +728,56 @@ const checkHost = async () => {
 };
 
 $('create').onclick = async () => {
+  const nom = $('cname').value.trim();
+  if (!nom) return void ($('createmsg').innerHTML =
+    `<div class="msg"><b>Il faut un pseudo.</b> C'est sous ce nom que tes captures seront comptées.</div>`);
+
   const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   code = Array.from({length:4}, () => L[Math.floor(Math.random()*L.length)]).join('');
   cfg = DEFAULT_CFG(); cfg.name = $('rname').value.trim() || 'Shiny race'; cfg.hostId = uid();
+
+  /* L'organisateur est un joueur comme les autres : il s'inscrit en
+     creant la course, sans avoir a passer par les reglages. */
+  meId = uid();
+  cfg.players = [{ id: meId, name: nom, team: '' }];
   isHost = true;
-  await sset(K.cfg(code), cfg); await rememberHost();
+  try { localStorage.setItem('sr:me:' + code, meId); } catch {}
+
+  const ok = await sset(K.cfg(code), cfg); await rememberHost();
+  if (!ok) return void ($('createmsg').innerHTML =
+    `<div class="msg"><b>Création impossible.</b> La synchronisation ne répond pas, réessaie.</div>`);
   renderSetup(); show('setup'); startPoll();
 };
 $('join').onclick = async () => {
   const c = $('jcode').value.trim().toUpperCase();
-  if (c.length !== 4) return void ($('joinmsg').innerHTML = `<div class="msg"><b>Code invalide.</b> Quatre lettres.</div>`);
+  const nom = $('jname').value.trim();
+  const msg = h => { $('joinmsg').innerHTML = `<div class="msg">${h}</div>`; };
+
+  if (!nom) return void msg(`<b>Il faut un pseudo.</b> C'est sous ce nom que tes captures seront comptées.`);
+  if (c.length !== 4) return void msg(`<b>Code invalide.</b> Quatre lettres.`);
+
   const got = await sget(K.cfg(c));
-  if (!got) return void ($('joinmsg').innerHTML = `<div class="msg"><b>Course introuvable.</b> Vérifie le code auprès de l'organisateur.</div>`);
+  if (!got) return void msg(`<b>Course introuvable.</b> Vérifie le code auprès de l'organisateur.`);
+
   code = c; cfg = got; if (!cfg.timer) cfg.timer = DEFAULT_CFG().timer;
+  cfg.players = cfg.players || [];
+
+  /* Un joueur portant deja ce pseudo ? On le reprend, ce qui permet de
+     revenir apres avoir ferme l'onglet sans perdre ses points. Sinon on
+     l'inscrit. Dans les deux cas le choix est definitif : plus aucun
+     selecteur ne permet d'en changer une fois la course rejointe. */
+  const meme = cfg.players.find(p => p.name.toLowerCase() === nom.toLowerCase());
+  if (meme) {
+    meId = meme.id;
+  } else {
+    meId = uid();
+    cfg.players.push({ id: meId, name: nom, team: '' });
+    cfg.updated = Date.now();
+    const ok = await sset(K.cfg(c), cfg);
+    if (!ok) return void msg(`<b>Inscription impossible.</b> La synchronisation ne répond pas, réessaie.`);
+  }
+  try { localStorage.setItem('sr:me:' + code, meId); } catch {}
+
   await checkHost(); await pull(); renderLive(); show('live'); startPoll();
 };
 $('jcode').addEventListener('keydown', e => { if (e.key === 'Enter') $('join').click(); });
@@ -900,16 +928,13 @@ function renderQuick(){
 
 function renderLive(){
   if (!cfg) return;
-  /* Le joueur se choisit une fois, avant le depart. Une fois la course
-     lancee on fige le choix : changer de pseudo en pleine partie
-     permettrait d'attribuer ses captures a quelqu'un d'autre. */
-  const locked = raceOpen() && !!meId;
-  $('cwho').innerHTML = cfg.players.length
-    ? cfg.players.map(p => `<option value="${p.id}"${p.id===meId?' selected':''}>${p.name}</option>`).join('')
-    : `<option value="">aucun joueur — voir les réglages</option>`;
-  $('cwho').disabled = locked;
-  const hint = $('cwholock');
-  if (hint) hint.hidden = !locked;
+  /* Le pseudo est choisi avant d'entrer et ne change plus : afficher un
+     selecteur laisserait croire qu'on peut attribuer ses captures a un
+     autre joueur en pleine course. */
+  const moi = cfg.players.find(p => p.id === meId);
+  $('cwho').innerHTML = moi
+    ? `<b>${moi.name}</b><span>choix figé pour la durée de la course</span>`
+    : `<b>Aucun joueur</b><span>reviens à l'accueil pour rejoindre avec un pseudo</span>`;
   renderQuick();
   $('detail').open = $('detail').open && raceOpen();
   $('cmon').disabled = $('addcatch').disabled = !raceOpen();
@@ -956,7 +981,7 @@ function renderLive(){
 }
 
 async function record(name, pts, why, dexid){
-  const pid = $('cwho').value;
+  const pid = meId;
   if (!pid || !raceOpen()) return;
   meId = pid;
   const arr = catches[pid] || [];
@@ -997,16 +1022,8 @@ $('cmon').addEventListener('keydown', e => { if (e.key === 'Enter') $('addcatch'
    capture : c'est ce qui permet de verrouiller le selecteur au depart. */
 $('undo').onclick = undoLast;
 
-$('diagnet').onclick = async () => {
-  $('diagnetout').textContent = 'test en cours…';
-  $('diagnetout').textContent = await selfTest();
-};
 
-$('cwho').addEventListener('change', () => {
-  meId = $('cwho').value || null;
-  try { localStorage.setItem('sr:me:' + code, meId || ''); } catch {}
-  renderLive();
-});
+
 
 /* Suppression ciblee : on ne peut retirer que ses propres captures,
    et seulement tant que la course est ouverte. */
@@ -1024,7 +1041,7 @@ $('feed').addEventListener('click', async e => {
 });
 
 async function undoLast(){
-  const pid = meId || $('cwho').value;
+  const pid = meId;
   const arr = [...(catches[pid] || [])];
   if (!arr.length || !raceOpen()) return;
   const last = arr.pop();
