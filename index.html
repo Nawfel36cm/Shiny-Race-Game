@@ -199,6 +199,8 @@ select option{background:var(--surf)}
 .ev .nm{font-family:var(--disp);font-weight:600;font-size:15px}
 .ev .why{font-size:11.5px;color:var(--dim-2)}
 .ev .p{font-family:var(--disp);font-weight:700;font-size:18px;color:var(--mint)}
+.ev img{image-rendering:pixelated}
+.ev img.deco{opacity:.6;filter:saturate(.75)}
 .evx{background:none;border:none;color:var(--dim-2);font-size:19px;line-height:1;cursor:pointer;
   padding:2px 6px;border-radius:8px;opacity:0;transition:.15s}
 .ev:hover .evx,.evx:focus-visible{opacity:1}
@@ -541,6 +543,19 @@ const slist = async p => {
 const API = 'https://pokeapi.co/api/v2/';
 const SPRITE = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${id}.png`;
 const MAXID = 809;
+
+/* Sprite decoratif pour une capture sans espece precisee. Le tirage est
+   derive de l'identifiant de la capture, donc stable : sans ca le
+   Pokemon changerait a chaque rafraichissement du classement.
+   Les identifiants 494 a 649 (5G) ont des sprites moins homogenes en
+   taille, on tire dans les generations 1 a 4 pour un rendu regulier. */
+const DECO_MAX = 493;
+function decoSprite(seed){
+  let h = 0;
+  const str = String(seed || '');
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return SPRITE(1 + (h % DECO_MAX));
+}
 
 const COLORS = { black:'noir', blue:'bleu', brown:'marron', gray:'gris', green:'vert',
   pink:'rose', purple:'violet', red:'rouge', white:'blanc', yellow:'jaune' };
@@ -971,8 +986,11 @@ function renderLive(){
   $('feed').innerHTML = all.sort((a,b)=>b.at-a.at).slice(0,40).map(c => {
     const p = cfg.players.find(x=>x.id===c.pid);
     const ok = inTime(c);
-    const vis = c.dexid ? `<img src="${SPRITE(c.dexid)}" alt="" onerror="this.style.visibility='hidden'">`
-                        : `<span class="ph"><i></i></span>`;
+    /* Espece precisee : le vrai sprite. Sinon un sprite decoratif,
+       shiny lui aussi, tire de l'identifiant de la capture. */
+    const src = c.dexid ? SPRITE(c.dexid) : decoSprite(c.id);
+    const vis = `<img class="${c.dexid ? '' : 'deco'}" src="${src}" alt=""
+                      onerror="this.style.visibility='hidden'">`;
     const mine = raceOpen() && c.pid === meId;
     return `<div class="ev${ok?'':' void'}">${vis}
       <div><div class="nm">${c.name}</div>
@@ -1058,7 +1076,7 @@ body{background:#1C1024;color:#FFF3E8;font-family:"Nunito Sans","Segoe UI",syste
 .clk.off{background:none;color:#9A7C9C;-webkit-text-fill-color:#9A7C9C;font-size:15px}
 
 ol{list-style:none;padding:0;display:grid;gap:5px;margin-bottom:13px}
-li{display:grid;grid-template-columns:24px 1fr auto;align-items:center;gap:9px;
+li{display:grid;grid-template-columns:24px 34px 1fr auto;align-items:center;gap:9px;
   padding:8px 11px;border-radius:11px;background:rgba(255,255,255,.05);
   border:1px solid #4A2C55;font-size:14.5px}
 li.p1{background:linear-gradient(90deg,rgba(255,154,46,.24),rgba(255,78,125,.10) 60%);
@@ -1067,6 +1085,8 @@ li.moi{box-shadow:inset 3px 0 0 #2EE6A8}
 .rk{font-family:"Fredoka",system-ui,sans-serif;font-weight:700;color:#9A7C9C;text-align:center;font-size:13px}
 li.p1 .rk{color:#FFCE3A}
 .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vg{width:34px;height:34px;display:block;image-rendering:pixelated;object-fit:contain}
+.vg.deco{opacity:.6;filter:saturate(.75)}
 .nm i{font-style:normal;color:#9A7C9C;font-size:11.5px;font-weight:400}
 .pt{font-family:"Fredoka",system-ui,sans-serif;font-weight:700;font-size:18px;color:#FFCE3A}
 .vide{color:#9A7C9C;font-size:13px;text-align:center;padding:16px 0}
@@ -1099,10 +1119,19 @@ function overlayHTML(){
   const esc = x => String(x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
   const lignes = ranked.map((p,i) => {
-    const n = all.filter(c => c.pid === p.id && inTime(c)).length;
+    const siennes = all.filter(c => c.pid === p.id && inTime(c));
+    const n = siennes.length;
     const cls = [i === 0 && t[p.id] > 0 ? 'p1' : '', p.id === meId ? 'moi' : ''].filter(Boolean).join(' ');
+    /* Vignette : la derniere prise du joueur, vrai sprite si l'espece a
+       ete precisee, sprite decoratif sinon. */
+    const last = siennes.sort((a,b) => b.at - a.at)[0];
+    const vig = last
+      ? `<img class="vg${last.dexid ? '' : ' deco'}" src="${last.dexid ? SPRITE(last.dexid) : decoSprite(last.id)}"
+              alt="" onerror="this.style.visibility='hidden'">`
+      : `<span class="vg"></span>`;
     return `<li class="${cls}">
       <span class="rk">${i+1}</span>
+      ${vig}
       <span class="nm">${esc(p.name)} <i>${n} capture${n>1?'s':''}</i></span>
       <span class="pt">${t[p.id]}</span></li>`;
   }).join('') || `<div class="vide">Aucun joueur pour l'instant.</div>`;
