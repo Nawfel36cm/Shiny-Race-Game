@@ -93,6 +93,15 @@ button.mark{background:none;border:none;padding:0;cursor:pointer;font:inherit;co
   .mascot-wrap::before{width:96px;height:96px}
   .mascot{width:46px;height:46px}
 }
+.roomwrap{display:inline-flex;align-items:center;gap:9px}
+.cpy{flex:none;width:30px;height:30px;padding:0;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:9px;
+  color:var(--dim-2);transition:color .15s,border-color .15s,background .15s}
+.cpy:hover{color:var(--gold);border-color:var(--gold);background:rgba(255,206,58,.12)}
+.cpy.done{color:var(--mint);border-color:var(--mint);background:rgba(46,230,168,.14)}
+.cpy svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
 .roomcode{font-family:var(--disp);font-weight:700;font-size:22px;letter-spacing:.24em;background:var(--hot);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 16px rgba(255,154,46,.5))}
 .sync{font-size:11.5px;color:var(--dim-2)}
 
@@ -366,8 +375,6 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
                style="text-transform:uppercase;letter-spacing:.24em;font-family:var(--disp);font-weight:700;text-align:center;font-size:19px">
         <button class="btn ghost" id="join">Entrer</button>
       </div>
-      <div class="field hide" id="jseedwrap" style="margin-top:12px"><label for="jseed">Graine de la course</label>
-        <input id="jseed" maxlength="40" placeholder="demande-la à l'organisateur" autocomplete="off"></div>
       <div id="joinmsg" style="margin-top:12px"></div>
       <p class="note">Choisis-le maintenant : il est figé une fois la course rejointe.</p>
     </div>
@@ -763,7 +770,7 @@ const esc = x => String(x == null ? '' : x)
 const $ = id => document.getElementById(id);
 let code = '', cfg = null, catches = {}, meId = null, poll = null, tick = null, isHost = false;
 
-const DEFAULT_ROM = () => ({ taux: 0, graine: '', verrou: false });
+const DEFAULT_ROM = () => ({ taux: 0 });
 const DEFAULT_CFG = () => ({ name:'', created:Date.now(), updated:Date.now(), hostId:'',
   base:{ s1:1, s2:2, s3:3, legend:4 }, rules:[], teams:[], players:[], rom: DEFAULT_ROM(),
   timer:{ durationMs: 60*60*1000, endsAt: null, pausedAt: null, started: false } });
@@ -777,11 +784,7 @@ function normaliser(c){
   return c;
 }
 const ROM = () => (cfg && cfg.rom) || DEFAULT_ROM();
-function romTexte(){
-  const r = ROM();
-  return [r.taux > 0 ? `1/${r.taux}` : null, r.graine ? `graine ${r.graine}` : null]
-    .filter(Boolean).join(' · ');
-}
+const romTexte = () => ROM().taux > 0 ? `1 sur ${ROM().taux}` : '';
 const BASE_LABELS = { s1:'Stade 1', s2:'Stade 2', s3:'Stade 3', legend:'Légendaire' };
 const BASE_FULL   = { s1:'Stade 1 — non évolué', s2:'Stade 2', s3:'Stade 3', legend:'Légendaire ou fabuleux' };
 
@@ -884,9 +887,46 @@ function score(rec){
   const s = rec.stage || 1;
   return { pts: cfg.base['s'+s], why: 'stade ' + s };
 }
+/* Deux feuillets : celui du dessus est un rectangle plein, celui du
+   dessous n'est trace que sur sa partie visible — un contour ferme
+   passerait sous le premier et se verrait par transparence. */
+const ICO_COPIE = `<svg viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="9" y="2.5" width="12.5" height="15" rx="3"/>
+  <path d="M9 6.5 H5.5 A3 3 0 0 0 2.5 9.5 V18.5 A3 3 0 0 0 5.5 21.5 H12 A3 3 0 0 0 15 18.5 V17.5"/></svg>`;
+const ICO_FAIT  = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5 L9.5 18 L20 6.5"/></svg>`;
+
+/* `navigator.clipboard` demande une origine sure. GitHub Pages est en
+   https donc c'est le cas, mais le repli couvre les ouvertures locales
+   du fichier, ou l'API est absente. */
+async function copier(txt){
+  try {
+    if (navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(txt); return true; }
+    const z = document.createElement('textarea');
+    z.value = txt; z.setAttribute('readonly','');
+    z.style.cssText = 'position:fixed;top:-999px;opacity:0';
+    document.body.appendChild(z); z.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(z);
+    return ok;
+  } catch { return false; }
+}
+
+let copieTimer = null;
 function show(id){
   ['home','setup','live'].forEach(s => $(s).classList.toggle('hide', s !== id));
-  $('roomtag').innerHTML = code ? `<span class="roomcode">${code}</span>` : '';
+  $('roomtag').innerHTML = code
+    ? `<span class="roomwrap"><span class="roomcode">${code}</span>
+         <button class="cpy" id="cpycode" title="Copier le code">${ICO_COPIE}</button></span>`
+    : '';
+  const b = $('cpycode');
+  if (b) b.onclick = async () => {
+    if (!(await copier(code))) return;
+    clearTimeout(copieTimer);
+    b.classList.add('done'); b.innerHTML = ICO_FAIT; b.title = 'Copié';
+    copieTimer = setTimeout(() => {
+      b.classList.remove('done'); b.innerHTML = ICO_COPIE; b.title = 'Copier le code';
+    }, 1500);
+  };
   majPopout(id);
 }
 
@@ -953,20 +993,6 @@ $('join').onclick = async () => {
   const got = normaliser(await sget(K.cfg(c)));
   if (!got) return void msg(`<b>Course introuvable.</b> Vérifie le code auprès de l'organisateur.`);
 
-  /* Verrou de graine. Le champ n'apparait qu'ici : inutile de le montrer
-     tant qu'on ignore si la course en demande une. La comparaison ignore
-     la casse et les espaces de bord — il s'agit de coordonner des
-     joueurs, pas de resister a une attaque. */
-  const attendue = String(got.rom.graine || '').trim().toLowerCase();
-  if (got.rom.verrou && attendue){
-    $('jseedwrap').classList.remove('hide');
-    const donnee = $('jseed').value.trim().toLowerCase();
-    if (!donnee) return void msg(`<b>Cette course exige une graine.</b>
-      Demande-la à l'organisateur, saisis-la ci-dessus puis réessaie.`);
-    if (donnee !== attendue) return void msg(`<b>Graine incorrecte.</b>
-      Elle doit être exactement celle utilisée pour préparer les ROMs.`);
-  }
-
   code = c; cfg = got;
   cfg.players = cfg.players || [];
 
@@ -992,10 +1018,9 @@ $('jcode').addEventListener('keydown', e => { if (e.key === 'Enter') $('join').c
 
 /* ------------------------- réglages -------------------------- */
 /* --------------------------- ROM de la course ---------------------------
- * Deux informations affichees a tous : le taux de shiny et la graine.
- * Elles ne sont pas verifiees par le site, qui n'a aucun moyen de lire la
- * ROM d'un joueur — c'est un point de comparaison commun, pas une preuve.
- * Le verrou de graine, lui, oblige a la connaitre pour entrer.
+ * Le taux annonce par l'organisateur, affiche a tous. Le site n'a aucun
+ * moyen de lire la ROM d'un joueur : c'est un point de comparaison
+ * commun, pas une verification.
  * ---------------------------------------------------------------------- */
 function renderRom(){
   const r = ROM();
@@ -1014,18 +1039,9 @@ function renderRom(){
         <input id="rtaux" class="mini" type="number" min="0" max="65536" placeholder="256"
                value="${r.taux > 0 ? r.taux : ''}">
         <span class="note" style="margin:0">vide ou 0 = non précisé</span>
-      </div></div>
-    <div class="field"><label for="rgraine">Graine</label>
-      <input id="rgraine" maxlength="40" placeholder="ex. race-du-samedi" value="${esc(r.graine)}"></div>
-    <div class="rule-row ${r.verrou ? '' : 'off'}" style="grid-template-columns:auto 1fr">
-      <div class="sw" role="switch" tabindex="0" aria-checked="${!!r.verrou}" id="rverrou"></div>
-      <span>Exiger la graine pour rejoindre</span></div>`;
+      </div></div>`;
 
-  $('rtaux').onchange   = () => { cfg.rom.taux = Math.max(0, Math.round(+$('rtaux').value || 0)); pushCfg(); };
-  $('rgraine').onchange = () => { cfg.rom.graine = $('rgraine').value.trim(); pushCfg(); };
-  const bascule = () => { cfg.rom.verrou = !cfg.rom.verrou; pushCfg(); renderRom(); };
-  $('rverrou').onclick  = bascule;
-  $('rverrou').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bascule(); } };
+  $('rtaux').onchange = () => { cfg.rom.taux = Math.max(0, Math.round(+$('rtaux').value || 0)); pushCfg(); };
 }
 
 function renderSetup(){
@@ -1124,9 +1140,7 @@ function quitter(){
   stopPoll();
   if (popWin && !popWin.closed) popWin.close();
   code=''; cfg=null; catches={}; meId=null;
-  /* Le champ de graine se referme : la course suivante n'en demande
-     pas forcement une, et une valeur restee la preterait a confusion. */
-  $('jseed').value = ''; $('jseedwrap').classList.add('hide'); $('joinmsg').innerHTML = '';
+  $('joinmsg').innerHTML = '';
   renderHist(); show('home');
 }
 
@@ -1250,13 +1264,10 @@ function renderLive(){
     : `<b>Aucun joueur</b><span>reviens à l'accueil pour rejoindre avec un pseudo</span>`;
   renderQuick();
 
-  const r = ROM();
-  $('romcard').innerHTML = (r.taux > 0 || r.graine) ? `<div class="card">
+  $('romcard').innerHTML = ROM().taux > 0 ? `<div class="card">
     <h2>ROM de la course</h2>
     <div class="romline">
-      ${r.taux > 0 ? `<span class="rc"><small>Taux de shiny</small><b>1 sur ${r.taux}</b></span>` : ''}
-      ${r.graine ? `<span class="rc"><small>Graine</small><b>${esc(r.graine)}</b></span>` : ''}
-      ${r.verrou ? `<span class="rc"><small>Accès</small><b>graine exigée</b></span>` : ''}
+      <span class="rc"><small>Taux de shiny</small><b>1 sur ${ROM().taux}</b></span>
     </div></div>` : '';
 
   $('detail').open = $('detail').open && raceOpen();
@@ -1556,7 +1567,7 @@ function overlayHTML(){
       <div class="hdtxt">
         <span class="sub">Shiny Race</span>
         <span class="ttl">${esc(cfg.name || 'Shiny race')}</span>
-        ${romTexte() ? `<span class="romx">${esc(romTexte())}</span>` : ''}
+        ${romTexte() ? `<span class="romx">shiny ${esc(romTexte())}</span>` : ''}
       </div>
       <span class="clk${st.mode === 'running' ? '' : ' off'}">${horloge}</span>
       <img class="mew" src="${MEW_GIF}" alt="" aria-hidden="true">`,
