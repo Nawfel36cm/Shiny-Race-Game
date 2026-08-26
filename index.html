@@ -259,6 +259,11 @@ select option{background:var(--surf)}
   border:1px solid var(--line-2);border-radius:var(--r-s);padding:11px 14px}
 .whoami b{font-family:var(--disp);font-size:16px}
 .whoami span{font-size:12px;color:var(--dim-2)}
+.romline{display:flex;flex-wrap:wrap;gap:10px}
+.romline .rc{display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.05);
+  border:1px solid var(--line);border-radius:var(--r-s);padding:9px 14px;min-width:118px}
+.romline small{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim-2);font-weight:700}
+.romline b{font-family:var(--disp);font-weight:600;font-size:17px;color:var(--gold)}
 .undobtn{float:right;background:rgba(255,255,255,.05);border:1px solid var(--line-2);
   color:var(--dim);width:34px;height:34px;border-radius:10px;cursor:pointer;
   font-size:17px;line-height:1;display:grid;place-items:center;transition:.15s;
@@ -357,10 +362,12 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
       <div class="field"><label for="jname">Ton pseudo</label>
         <input id="jname" placeholder="Ton nom dans la course" maxlength="20"></div>
       <div class="row" style="flex-wrap:nowrap">
-        <input id="jcode" placeholder="CODE" maxlength="4"
-               style="text-transform:uppercase;letter-spacing:.28em;font-family:var(--disp);font-weight:700;text-align:center;font-size:19px">
+        <input id="jcode" placeholder="CODE" maxlength="5"
+               style="text-transform:uppercase;letter-spacing:.24em;font-family:var(--disp);font-weight:700;text-align:center;font-size:19px">
         <button class="btn ghost" id="join">Entrer</button>
       </div>
+      <div class="field hide" id="jseedwrap" style="margin-top:12px"><label for="jseed">Graine de la course</label>
+        <input id="jseed" maxlength="40" placeholder="demande-la à l'organisateur" autocomplete="off"></div>
       <div id="joinmsg" style="margin-top:12px"></div>
       <p class="note">Choisis-le maintenant : il est figé une fois la course rejointe.</p>
     </div>
@@ -372,7 +379,7 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
 
   <div class="promo">
     <h3>Shiny Race Studio</h3>
-    <p>Prépare tes ROMs avant la course : taux de shiny réglable, rencontres sauvages aléatoires à graine reproductible, et le randomizer complet — dresseurs, capacités, statistiques, objets, starters.</p>
+    <p>Prépare tes ROMs avant la course : taux de shiny réglable, rencontres sauvages aléatoires à graine reproductible, et le randomizer complet — capacités, statistiques, objets, starters.</p>
     <div class="dl">
       <a href="https://github.com/Nawfel36cm/Shiny-Race/releases" target="_blank" rel="noopener">
         Télécharger sur GitHub</a>
@@ -393,6 +400,12 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
       </div>
     </div>
     <p class="note" id="timerhint"></p>
+  </div>
+
+  <div class="card">
+    <h2>ROM de la course <span class="opt" id="rhost"></span></h2>
+    <div id="rombox"></div>
+    <p class="note">Affiché à tous les participants, pour que chacun vérifie qu'il joue avec les mêmes réglages.</p>
   </div>
 
   <div class="card">
@@ -462,6 +475,8 @@ footer{text-align:center;color:var(--dim-2);font-size:11.5px;margin-top:30px}
         <rect x="9.5" y="9.5" width="12" height="10" rx="2" class="f"/>
       </svg><span>Vue compacte</span></button>
   </div>
+
+  <div id="romcard"></div>
 
   <div class="card">
     <h2>Nouvelle capture<button class="undobtn" id="undo" title="Annuler la dernière action">↶</button></h2>
@@ -723,12 +738,50 @@ function refreshDatalist(){}
 
 const K = { cfg: c => `race:${c}:cfg`, pl: (c,p) => `race:${c}:p:${p}` };
 const uid = () => Math.random().toString(36).slice(2,8);
+
+/* --------------------------- codes de salon ---------------------------
+ * Cinq caracteres au lieu de quatre, chiffres compris. `I` et `O` restent
+ * exclus des lettres : ce sont les seules qui se confondent a l'oral et a
+ * l'ecrit avec `1` et `0`, qui eux sont donc sans ambiguite.
+ *   avant : 24^4 =        331 776 combinaisons
+ *   apres : 34^5 =     45 435 424 combinaisons
+ * Le vrai garde-fou n'est pas la taille de l'alphabet mais la verification
+ * de collision faite a la creation : sans elle, un tirage identique
+ * ecraserait la course d'un autre, quelle que soit la longueur du code.
+ * -------------------------------------------------------------------- */
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
+const CODE_LEN   = 5;
+const tirerCode  = () => Array.from({length:CODE_LEN},
+  () => CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
+/* Les anciennes courses ont un code a quatre lettres : on continue de les
+   accepter, sinon l'historique et les liens deja partages casseraient. */
+const nettoyerCode = x => String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const codeValide   = c => c.length === CODE_LEN || c.length === 4;
+
+const esc = x => String(x == null ? '' : x)
+  .replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = id => document.getElementById(id);
 let code = '', cfg = null, catches = {}, meId = null, poll = null, tick = null, isHost = false;
 
+const DEFAULT_ROM = () => ({ taux: 0, graine: '', verrou: false });
 const DEFAULT_CFG = () => ({ name:'', created:Date.now(), updated:Date.now(), hostId:'',
-  base:{ s1:1, s2:2, s3:3, legend:4 }, rules:[], teams:[], players:[],
+  base:{ s1:1, s2:2, s3:3, legend:4 }, rules:[], teams:[], players:[], rom: DEFAULT_ROM(),
   timer:{ durationMs: 60*60*1000, endsAt: null, pausedAt: null, started: false } });
+
+/* Une course creee avant ces reglages n'a ni `timer` ni `rom`. On complete
+   au chargement plutot que de tester l'absence a chaque lecture. */
+function normaliser(c){
+  if (!c) return c;
+  if (!c.timer) c.timer = DEFAULT_CFG().timer;
+  if (!c.rom)   c.rom   = DEFAULT_ROM();
+  return c;
+}
+const ROM = () => (cfg && cfg.rom) || DEFAULT_ROM();
+function romTexte(){
+  const r = ROM();
+  return [r.taux > 0 ? `1/${r.taux}` : null, r.graine ? `graine ${r.graine}` : null]
+    .filter(Boolean).join(' · ');
+}
 const BASE_LABELS = { s1:'Stade 1', s2:'Stade 2', s3:'Stade 3', legend:'Légendaire' };
 const BASE_FULL   = { s1:'Stade 1 — non évolué', s2:'Stade 2', s3:'Stade 3', legend:'Légendaire ou fabuleux' };
 
@@ -864,8 +917,17 @@ $('create').onclick = async () => {
   if (!nom) return void ($('createmsg').innerHTML =
     `<div class="msg"><b>Il faut un pseudo.</b> C'est sous ce nom que tes captures seront comptées.</div>`);
 
-  const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  code = Array.from({length:4}, () => L[Math.floor(Math.random()*L.length)]).join('');
+  /* On verifie que le code tire n'est pas deja pris avant d'ecrire :
+     sans ce controle, deux courses simultanees pouvaient se retrouver
+     sur la meme cle, la seconde effacant la premiere. */
+  code = '';
+  for (let essai = 0; essai < 6 && !code; essai++){
+    const c = tirerCode();
+    if (!(await sget(K.cfg(c)))) code = c;
+  }
+  if (!code) return void ($('createmsg').innerHTML =
+    `<div class="msg"><b>Création impossible.</b> Impossible de trouver un code libre, réessaie.</div>`);
+
   cfg = DEFAULT_CFG(); cfg.name = $('rname').value.trim() || 'Shiny race'; cfg.hostId = uid();
 
   /* L'organisateur est un joueur comme les autres : il s'inscrit en
@@ -881,17 +943,31 @@ $('create').onclick = async () => {
   renderSetup(); show('setup'); startPoll();
 };
 $('join').onclick = async () => {
-  const c = $('jcode').value.trim().toUpperCase();
+  const c = nettoyerCode($('jcode').value);
   const nom = $('jname').value.trim();
   const msg = h => { $('joinmsg').innerHTML = `<div class="msg">${h}</div>`; };
 
   if (!nom) return void msg(`<b>Il faut un pseudo.</b> C'est sous ce nom que tes captures seront comptées.`);
-  if (c.length !== 4) return void msg(`<b>Code invalide.</b> Quatre lettres.`);
+  if (!codeValide(c)) return void msg(`<b>Code invalide.</b> Cinq caractères, lettres ou chiffres.`);
 
-  const got = await sget(K.cfg(c));
+  const got = normaliser(await sget(K.cfg(c)));
   if (!got) return void msg(`<b>Course introuvable.</b> Vérifie le code auprès de l'organisateur.`);
 
-  code = c; cfg = got; if (!cfg.timer) cfg.timer = DEFAULT_CFG().timer;
+  /* Verrou de graine. Le champ n'apparait qu'ici : inutile de le montrer
+     tant qu'on ignore si la course en demande une. La comparaison ignore
+     la casse et les espaces de bord — il s'agit de coordonner des
+     joueurs, pas de resister a une attaque. */
+  const attendue = String(got.rom.graine || '').trim().toLowerCase();
+  if (got.rom.verrou && attendue){
+    $('jseedwrap').classList.remove('hide');
+    const donnee = $('jseed').value.trim().toLowerCase();
+    if (!donnee) return void msg(`<b>Cette course exige une graine.</b>
+      Demande-la à l'organisateur, saisis-la ci-dessus puis réessaie.`);
+    if (donnee !== attendue) return void msg(`<b>Graine incorrecte.</b>
+      Elle doit être exactement celle utilisée pour préparer les ROMs.`);
+  }
+
+  code = c; cfg = got;
   cfg.players = cfg.players || [];
 
   /* Un joueur portant deja ce pseudo ? On le reprend, ce qui permet de
@@ -915,8 +991,46 @@ $('join').onclick = async () => {
 $('jcode').addEventListener('keydown', e => { if (e.key === 'Enter') $('join').click(); });
 
 /* ------------------------- réglages -------------------------- */
+/* --------------------------- ROM de la course ---------------------------
+ * Deux informations affichees a tous : le taux de shiny et la graine.
+ * Elles ne sont pas verifiees par le site, qui n'a aucun moyen de lire la
+ * ROM d'un joueur — c'est un point de comparaison commun, pas une preuve.
+ * Le verrou de graine, lui, oblige a la connaitre pour entrer.
+ * ---------------------------------------------------------------------- */
+function renderRom(){
+  const r = ROM();
+  $('rhost').textContent = isHost ? 'tu règles' : "défini par l'organisateur";
+
+  if (!isHost){
+    $('rombox').innerHTML = `<div class="whoami"><b>${esc(romTexte() || 'Non précisé')}</b>
+      <span>réglé par l'organisateur</span></div>`;
+    return;
+  }
+
+  $('rombox').innerHTML = `
+    <div class="field"><label for="rtaux">Taux de shiny</label>
+      <div class="row" style="flex-wrap:nowrap">
+        <span class="note" style="margin:0">1 sur</span>
+        <input id="rtaux" class="mini" type="number" min="0" max="65536" placeholder="256"
+               value="${r.taux > 0 ? r.taux : ''}">
+        <span class="note" style="margin:0">vide ou 0 = non précisé</span>
+      </div></div>
+    <div class="field"><label for="rgraine">Graine</label>
+      <input id="rgraine" maxlength="40" placeholder="ex. race-du-samedi" value="${esc(r.graine)}"></div>
+    <div class="rule-row ${r.verrou ? '' : 'off'}" style="grid-template-columns:auto 1fr">
+      <div class="sw" role="switch" tabindex="0" aria-checked="${!!r.verrou}" id="rverrou"></div>
+      <span>Exiger la graine pour rejoindre</span></div>`;
+
+  $('rtaux').onchange   = () => { cfg.rom.taux = Math.max(0, Math.round(+$('rtaux').value || 0)); pushCfg(); };
+  $('rgraine').onchange = () => { cfg.rom.graine = $('rgraine').value.trim(); pushCfg(); };
+  const bascule = () => { cfg.rom.verrou = !cfg.rom.verrou; pushCfg(); renderRom(); };
+  $('rverrou').onclick  = bascule;
+  $('rverrou').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bascule(); } };
+}
+
 function renderSetup(){
   renderPresets();
+  renderRom();
   $('basepoints').innerHTML = Object.entries(BASE_FULL).map(([k,l]) => `
     <div class="row" style="justify-content:space-between">
       <span>${l}</span><input class="mini" type="number" min="0" max="99" value="${cfg.base[k]}" data-base="${k}">
@@ -1010,6 +1124,9 @@ function quitter(){
   stopPoll();
   if (popWin && !popWin.closed) popWin.close();
   code=''; cfg=null; catches={}; meId=null;
+  /* Le champ de graine se referme : la course suivante n'en demande
+     pas forcement une, et une valeur restee la preterait a confusion. */
+  $('jseed').value = ''; $('jseedwrap').classList.add('hide'); $('joinmsg').innerHTML = '';
   renderHist(); show('home');
 }
 
@@ -1035,10 +1152,10 @@ function histOublier(c){
 }
 
 async function reprendre(c){
-  const got = await sget(K.cfg(c));
+  const got = normaliser(await sget(K.cfg(c)));
   if (!got) return void ($('joinmsg').innerHTML =
     `<div class="msg"><b>Course introuvable.</b> Elle a peut-être été supprimée.</div>`);
-  code = c; cfg = got; if (!cfg.timer) cfg.timer = DEFAULT_CFG().timer;
+  code = c; cfg = got;
   const garde = histLire().find(x => x.code === c);
   const moi = garde && cfg.players.find(p => p.name === garde.pseudo);
   meId = moi ? moi.id : (lget('me:' + c) || null);
@@ -1078,7 +1195,7 @@ function pushCfg(){
 /* --------------------------- direct --------------------------- */
 async function pull(){
   const c = await sget(K.cfg(code));
-  if (c && (!cfg || (c.updated || 0) > (cfg.updated || 0))) { cfg = c; if (!cfg.timer) cfg.timer = DEFAULT_CFG().timer; }
+  if (c && (!cfg || (c.updated || 0) > (cfg.updated || 0))) { cfg = normaliser(c); }
   const keys = await slist(`race:${code}:p:`);
   const next = {};
   for (const k of keys){
@@ -1132,6 +1249,16 @@ function renderLive(){
     ? `<b>${moi.name}</b><span>choix figé pour la durée de la course</span>`
     : `<b>Aucun joueur</b><span>reviens à l'accueil pour rejoindre avec un pseudo</span>`;
   renderQuick();
+
+  const r = ROM();
+  $('romcard').innerHTML = (r.taux > 0 || r.graine) ? `<div class="card">
+    <h2>ROM de la course</h2>
+    <div class="romline">
+      ${r.taux > 0 ? `<span class="rc"><small>Taux de shiny</small><b>1 sur ${r.taux}</b></span>` : ''}
+      ${r.graine ? `<span class="rc"><small>Graine</small><b>${esc(r.graine)}</b></span>` : ''}
+      ${r.verrou ? `<span class="rc"><small>Accès</small><b>graine exigée</b></span>` : ''}
+    </div></div>` : '';
+
   $('detail').open = $('detail').open && raceOpen();
   $('cmon').disabled = $('addcatch').disabled = !raceOpen();
 
@@ -1302,6 +1429,7 @@ body{background:#1C1024;color:#FFF3E8;font-family:"Nunito Sans","Segoe UI",syste
 .ttl{font-family:"Fredoka",system-ui,sans-serif;font-weight:600;font-size:15px;line-height:1.15;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
 .sub{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9A7C9C;font-weight:700}
+.romx{display:block;font-size:10.5px;color:#CBAAC6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .clk{font-family:"Fredoka",system-ui,sans-serif;font-weight:700;font-size:21px;white-space:nowrap;
   background:linear-gradient(135deg,#FFD84D,#FF9A2E 46%,#FF5C7A);
   -webkit-background-clip:text;background-clip:text;color:transparent}
@@ -1428,6 +1556,7 @@ function overlayHTML(){
       <div class="hdtxt">
         <span class="sub">Shiny Race</span>
         <span class="ttl">${esc(cfg.name || 'Shiny race')}</span>
+        ${romTexte() ? `<span class="romx">${esc(romTexte())}</span>` : ''}
       </div>
       <span class="clk${st.mode === 'running' ? '' : ' off'}">${horloge}</span>
       <img class="mew" src="${MEW_GIF}" alt="" aria-hidden="true">`,
